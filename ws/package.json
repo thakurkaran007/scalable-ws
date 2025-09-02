@@ -7,9 +7,15 @@
     "start": "bun run index.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/ws": "^8.18.1"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@types/ioredis": "^5.0.0",
+    "ioredis": "^5.7.0",
+    "ws": "^8.18.3"
   }
 }

@@ -1,43 +1,46 @@
 import { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
+import Redis from 'ioredis';
 
 const wss = new WebSocketServer({ port: 8081 });
+const pub = new Redis();
+const sub = new Redis();
 
 interface Rooms {
   sockets: WebSocket[];
 }
-
-const RELAYER_URL = 'ws://localhost:3001';
-const relaySocket = new WebSocket(RELAYER_URL);
-
 const rooms: Record<string, Rooms> = {};
 
-relaySocket.onmessage = ({ data }) => {
-  const strData = typeof data === "string" ? data : data.toString();
-  console.log("Received from relay:", strData);
+function subscribeToRoom(roomId: string) {
+  //***For Hundred users work fine  */
+  // sub.subscribe(`room:${roomId}`, (err) => {
+  //   if (err) console.error("Redis subscribe error:", err);
+  //   else console.log(`Subscribed to room:${roomId}`);
+  // })
 
-  try {
-    const parsed = JSON.parse(strData);
-    const { roomId, type, message } = parsed;
+  // if Millions of users are there redis needs to kkep track of million
+  sub.psubscribe("room:*");
 
-    if (type === "chat" && rooms[roomId]) {
-      rooms[roomId].sockets.forEach(s =>
-        s.send(JSON.stringify({ type: "chat", message }))
-      );
+  sub.on("pmessage", (pattern, channel, message) => {
+    console.log(pattern); // 'room:*'
+    const roomId = channel.split(":")[1];
+
+    if (roomId && rooms[roomId]) {
+      rooms[roomId].sockets.forEach(s => {
+        if (s.readyState === s.OPEN) {
+          s.send(message);
+        }
+      })
     }
-  } catch (err) {
-    console.error("Failed to parse relay message:", err);
-  }
-};
-
-
+  })
+}
 
 wss.on('connection', function connection(ws) {
   ws.on('error', console.error);
 
   ws.on('message', function message(data: string) {
     const parsedMessage = JSON.parse(data);
-    const { type, roomId, message: chatMsg } = parsedMessage;
+    const { type, roomId, message } = parsedMessage;
 
     switch (type) {
       case 'join-room':
@@ -45,10 +48,11 @@ wss.on('connection', function connection(ws) {
           rooms[roomId] = { sockets: [] };
         }
         rooms[roomId].sockets.push(ws);
+        subscribeToRoom(roomId);
         break;
 
       case 'chat':
-        relaySocket.send(JSON.stringify({ type: 'chat', roomId, message: chatMsg }));
+        pub.publish(`room:${roomId}`, JSON.stringify({ type, message, roomId}));
         break;
 
       default:
@@ -56,5 +60,14 @@ wss.on('connection', function connection(ws) {
     }
   });
 
-  ws.send(JSON.stringify({ type: 'welcome', message: 'Connected to WebSocket server' }));
+  ws.onclose = () => {
+    for (const roomId in rooms) {
+      if (rooms[roomId]) {
+        rooms[roomId].sockets = rooms[roomId].sockets.filter(s => s != ws);
+        if (rooms[roomId].sockets.length === 0) {
+          delete rooms[roomId];
+        }
+      }
+    }
+  }
 });
